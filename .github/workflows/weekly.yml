@@ -1,0 +1,56 @@
+name: weekly-events
+
+on:
+  schedule:
+    - cron: "30 14 * * 1"   # Mondays 14:30 UTC = 7:30 PDT / 6:30 PST
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the digest in the log instead of sending it"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write   # to commit data/seen.json
+
+concurrency:
+  group: weekly-events
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Unit tests
+        run: pytest -q
+
+      - name: Run agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python src/main.py --dry-run
+          else
+            python src/main.py
+          fi
+
+      - name: Save seen events
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          git config user.name "events-bot"
+          git config user.email "events-bot@users.noreply.github.com"
+          git add data/seen.json
+          git diff --cached --quiet || git commit -m "Update seen events"
+          git push
